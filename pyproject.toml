@@ -1,0 +1,39 @@
+[project]
+name = "ptcgl-redeem"
+version = "0.1.0"
+description = "Batch-redeem Pokémon TCG Live codes from a CSV or Google Sheet"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.48",
+    "typer>=0.15",
+    "rich>=13.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+ptcgl-redeem = "ptcgl_redeem.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"ptcgl_redeem/cli.py" = ["E501"]

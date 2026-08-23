@@ -1,0 +1,4 @@
+Code,Set,Batch,Date,Redeemed,Status,Detail
+Email 1 — Example Set (2/2) — 2026-01-01,Example Set,2/2,2026-01-01,FALSE,,
+TESTCODE00001,Example Set,2/2,2026-01-01,FALSE,,
+TESTCODE00002,Example Set,2/2,2026-01-01,TRUE,redeemed,seeded example
