@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,25 @@ def is_code(raw: str) -> bool:
 
 def is_truthy(value: str | None) -> bool:
     return str(value or "").strip().upper() in TRUE_VALUES
+
+
+HASH_PREFIX = "sha256:"
+
+
+def hash_code(code: str) -> str:
+    """One-way fingerprint of a code.
+
+    Lets a spent code still be recognised later without storing anything
+    redeemable. Unsalted on purpose so the same code always fingerprints the
+    same way; the 13-character keyspace is far too large to enumerate.
+    """
+    if code.startswith(HASH_PREFIX):
+        return code
+    return HASH_PREFIX + hashlib.sha256(normalize_code(code).encode()).hexdigest()
+
+
+def is_hashed(value: str) -> bool:
+    return value.startswith(HASH_PREFIX)
 
 
 def mask_code(code: str) -> str:
@@ -67,9 +87,15 @@ def parse_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
 def iter_codes(rows: list[dict[str, str]]) -> list[CodeRow]:
     found: list[CodeRow] = []
     for raw in rows:
-        code = normalize_code(raw.get("Code", ""))
-        if not is_code(code):
-            continue
+        original = (raw.get("Code") or "").strip()
+        if is_hashed(original):
+            # Scrubbed row: keep it countable so the record survives, but leave
+            # the fingerprint untouched -- normalising would corrupt the hex.
+            code = original
+        else:
+            code = normalize_code(original)
+            if not is_code(code):
+                continue
         found.append(
             CodeRow(
                 code=code,

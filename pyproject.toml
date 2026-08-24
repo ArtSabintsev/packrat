@@ -1,6 +1,6 @@
 [project]
 name = "packrat"
-version = "1.0.0"
+version = "1.1.0"
 description = "Batch-redeem Pokémon TCG Live codes through the macOS game client"
 readme = "README.md"
 requires-python = ">=3.11"

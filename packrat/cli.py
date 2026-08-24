@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .codes import mask_code
+from .codes import hash_code, is_code, is_hashed, mask_code
 from .config import DEFAULT_CSV, RESULTS_DIR, SHARE_DIR, ensure_dirs
 from .store import CsvStore
 
@@ -249,6 +249,63 @@ def doctor() -> None:
         console.print("\n[red]Not ready.[/red] Fix the items above, then run doctor again.")
         raise typer.Exit(1)
     console.print("\n[green]Ready.[/green] Run: packrat run --limit 10")
+
+
+@app.command()
+def scrub(
+    csv_path: Path = typer.Option(DEFAULT_CSV, "--csv"),
+    yes: bool = typer.Option(False, "--yes", help="Do not ask for confirmation"),
+) -> None:
+    """Replace stored codes with one-way hashes. Irreversible.
+
+    Redemption codes are bearer tokens. Once they are spent the plaintext has no
+    use, but it is still worth stealing, so this rewrites the working CSV and the
+    run journals in place, leaving only SHA-256 fingerprints. Set, status and
+    counts are preserved, and a code can still be recognised later by hashing it
+    again -- it simply cannot be read back out.
+    """
+    store = _store(csv_path)
+    pending = store.pending()
+    if pending:
+        # The CSV is the work queue; hashing it mid-run would destroy it.
+        console.print(f"[red]{len(pending)} codes still pending. Finish the run first.[/red]")
+        raise typer.Exit(1)
+
+    already = sum(1 for row in store.rows if is_hashed(row.get("Code", "")))
+    targets = [row for row in store.rows if is_code(row.get("Code", ""))]
+    journals = sorted(RESULTS_DIR.glob("*.jsonl"))
+
+    if not targets and already:
+        console.print(f"Already scrubbed ({already} hashed rows).")
+        return
+
+    console.print(f"Will hash [bold]{len(targets)}[/bold] codes in {csv_path}")
+    console.print(f"and rewrite [bold]{len(journals)}[/bold] run journals.")
+    console.print("[yellow]This cannot be undone.[/yellow]")
+    if not yes and not typer.confirm("Continue?"):
+        raise typer.Abort()
+
+    for row in targets:
+        row["Code"] = hash_code(row["Code"])
+    store.save()
+
+    rewritten = 0
+    for path in journals:
+        lines = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            code = entry.get("code", "")
+            if is_code(code):
+                entry["code"] = hash_code(code)
+                rewritten += 1
+            lines.append(json.dumps(entry))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    console.print(f"[green]Scrubbed[/green] {len(targets)} codes and {rewritten} journal entries.")
+    console.print("Check a code later with: shasum -a 256 <<< 'CODE'")
 
 @app.command()
 def where() -> None:

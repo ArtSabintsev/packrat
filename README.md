@@ -9,7 +9,7 @@
 <p align="center">
   <img alt="platform" src="https://img.shields.io/badge/platform-macOS-black">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue">
-  <img alt="tests" src="https://img.shields.io/badge/tests-53%20passing-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-59%20passing-brightgreen">
   <img alt="license" src="https://img.shields.io/badge/license-private-lightgrey">
 </p>
 
@@ -120,7 +120,7 @@ uv sync --extra dev
 > the checklist below, stopping at step 3 to ask you to click.
 >
 > 1. `uv sync --extra dev`
-> 2. `uv run pytest` — 53 tests, no game required
+> 2. `uv run pytest` — 59 tests, no game required
 > 3. **Human step:** grant the two permissions, restart the terminal
 > 4. `packrat doctor` — repeat until it exits 0
 > 5. `packrat import <csv>` then `packrat status`
@@ -178,6 +178,7 @@ through harmlessly.
 | `packrat import FILE` | Copy a spreadsheet export into the local working CSV |
 | `packrat run` | Redeem pending codes |
 | `packrat status` | Pending vs redeemed, broken down by set |
+| `packrat scrub` | Replace stored codes with one-way hashes |
 | `packrat where` | Print local data paths |
 
 ## How it works
@@ -219,15 +220,42 @@ halts rather than silently marking codes redeemed.
 Redemption codes are bearer tokens — anyone who reads one can redeem it.
 
 - The working CSV lives in `~/.local/share/packrat/`, **never** in the repo.
-- `.gitignore` excludes `*.csv`, allowing only the fabricated `codes.example.csv`.
+- `.gitignore` excludes `*.csv`, `*.txt` and `*.log`, allowing only the
+  fabricated `codes.example.csv`.
 - Console output and run journals **mask codes** (`…JKLM`) unless you pass
   `--print-codes`.
 - `--log` is the one place real codes are written, and only to a path you name.
 
+### Scrub when you are done
+
+While codes are pending the CSV must hold them in the clear — it is the work
+queue. Once everything is redeemed, that plaintext is worth stealing and worth
+nothing to you:
+
+```console
+$ packrat scrub
+Will hash 4000 codes in ~/.local/share/packrat/codes.csv
+and rewrite 7 run journals.
+This cannot be undone.
+Continue? [y/N]: y
+Scrubbed 4000 codes and 3194 journal entries.
+```
+
+Codes become SHA-256 fingerprints. Set, status and counts survive — `packrat
+status` reads exactly as before — but nothing redeemable is left on disk. You
+can still recognise a code later by hashing it again:
+
+```bash
+printf '%s' 'YOURCODEHERE' | shasum -a 256
+```
+
+`scrub` refuses to run while any code is still pending, so it cannot destroy a
+live queue.
+
 ## Development
 
 ```bash
-uv run pytest        # 53 tests
+uv run pytest        # 59 tests
 uv run ruff check .
 ```
 

@@ -137,3 +137,43 @@ def test_missing_permissions_abort_before_touching_the_client(csv_path, driver, 
     result = run(csv_path)
     assert result.exit_code == 2
     assert driver["submitted"] == []
+
+
+class TestScrub:
+    """Scrubbing is irreversible, so its guards matter more than its happy path."""
+
+    def test_refuses_while_codes_are_pending(self, csv_path, driver):
+        # The CSV is the work queue; hashing it mid-run would destroy it.
+        result = runner.invoke(cli.app, ["scrub", "--csv", str(csv_path), "--yes"])
+        assert result.exit_code == 1
+        assert "TESTCODE00001" in csv_path.read_text()
+
+    def test_hashes_codes_once_everything_is_redeemed(self, csv_path, driver):
+        driver["set_outcomes"](dict.fromkeys(CODES, macapp.Outcome.SUCCESS))
+        run(csv_path)
+
+        result = runner.invoke(cli.app, ["scrub", "--csv", str(csv_path), "--yes"])
+        assert result.exit_code == 0
+
+        text = csv_path.read_text()
+        for code in CODES:
+            assert code not in text          # no plaintext survives
+        assert text.count("sha256:") == 3    # but every row is still accounted for
+
+    def test_is_idempotent(self, csv_path, driver):
+        driver["set_outcomes"](dict.fromkeys(CODES, macapp.Outcome.SUCCESS))
+        run(csv_path)
+        runner.invoke(cli.app, ["scrub", "--csv", str(csv_path), "--yes"])
+        once = csv_path.read_text()
+
+        result = runner.invoke(cli.app, ["scrub", "--csv", str(csv_path), "--yes"])
+        assert result.exit_code == 0
+        assert csv_path.read_text() == once
+
+    def test_hash_recognises_the_same_code_later(self):
+        from packrat.codes import hash_code, is_hashed
+
+        assert hash_code("TESTCODE00001") == hash_code("testcode00001")  # normalised
+        assert hash_code("TESTCODE00001") != hash_code("TESTCODE00002")
+        assert is_hashed(hash_code("TESTCODE00001"))
+        assert hash_code(hash_code("TESTCODE00001")) == hash_code("TESTCODE00001")

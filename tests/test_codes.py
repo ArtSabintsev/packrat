@@ -190,3 +190,26 @@ class TestSkipVocabulary:
     def test_legacy_rejected_is_still_skipped(self):
         # Written by an older version; existing sheets must not be re-run.
         assert pending_codes(iter_codes([self._row("rejected")])) == []
+
+
+class TestScrubbedRowsStayReadable:
+    def test_hashed_rows_are_still_counted(self):
+        """Scrubbing removes the secret, not the record."""
+        from packrat.codes import hash_code
+
+        row = {
+            "Code": hash_code("TESTCODE00001"), "Set": "Example Set", "Batch": "",
+            "Date": "", "Redeemed": "TRUE", "Status": "success", "Detail": "",
+        }
+        codes = iter_codes([row])
+        assert len(codes) == 1
+        assert codes[0].redeemed is True
+        assert codes[0].set_name == "Example Set"
+        assert codes[0].code == hash_code("TESTCODE00001")   # hex preserved verbatim
+
+    def test_hashed_rows_are_not_pending(self):
+        from packrat.codes import hash_code
+
+        row = {"Code": hash_code("TESTCODE00001"), "Set": "S", "Batch": "", "Date": "",
+               "Redeemed": "TRUE", "Status": "success", "Detail": ""}
+        assert pending_codes(iter_codes([row])) == []
