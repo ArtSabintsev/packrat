@@ -6,12 +6,12 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
-.env
-.env.*
-!.env.example
 data/
 results/
 debug-artifacts/
+# --log writes unmasked codes; never let one land in the repo
 *.csv
+*.txt
+*.log
 !codes.example.csv
 .DS_Store

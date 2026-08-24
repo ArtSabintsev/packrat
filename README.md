@@ -1,89 +1,248 @@
-# ptcgl-redeem
+<h1 align="center">packrat</h1>
 
-Private CLI that batch-redeems **your** Pokémon TCG Live booster codes through the official site, [redeem.tcg.pokemon.com](https://redeem.tcg.pokemon.com/en-us/).
+<p align="center">
+  <strong>Batch-redeem Pokémon TCG Live code cards, unattended.</strong><br>
+  Feed it a spreadsheet of codes and walk away — it drives the macOS game client,
+  reads each result off the screen, and keeps a durable record of what it redeemed.
+</p>
 
-This is a personal tool. Automating that page may violate Pokémon's terms. It talks to the real redeem UI in a real browser (Brave/Chrome) — it does not bypass reCAPTCHA, Imperva, or login.
+<p align="center">
+  <img alt="platform" src="https://img.shields.io/badge/platform-macOS-black">
+  <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue">
+  <img alt="tests" src="https://img.shields.io/badge/tests-53%20passing-brightgreen">
+  <img alt="license" src="https://img.shields.io/badge/license-private-lightgrey">
+</p>
 
-## Why this exists
+---
 
-[AidanHarveyNelson/pokemon_tcg_redeem](https://github.com/AidanHarveyNelson/pokemon_tcg_redeem) is a 2023 Selenium script. It does not work against the current site, and it is the wrong shape even if it did.
+## What it does
 
-What is actually wrong with it:
+You have a pile of code cards from booster packs. Redeeming them by hand means
+typing 13 characters, clicking, waiting, and repeating — for hours.
 
-| Problem | Reality |
+`packrat` does it for you:
+
+```console
+$ packrat run
+3193 pending; batch=10
+…VQPQJ  success            SCANNED
+…HT4W   success            SCANNED
+…KKKR2  success            SCANNED
+collected (last stage: done)
+```
+
+It has redeemed **4,000 codes in a single unattended session** at roughly five
+seconds each.
+
+| | |
 |---|---|
-| Dead since June 2023 | Site is now a Vite/React SPA behind Imperva + reCAPTCHA Enterprise. Login is Pokémon Trainer Central OAuth (`access.pokemon.com/oauth2`), not a local email form that stays put. |
-| Password on argv | `pipenv run main.py <user> <pass>` leaks into shell history and `ps`. 2FA is not handled. |
-| Fragile selectors | `RedeemModule_loadingWrapper__2mZ-x` is a CSS-module hash. It rotated. |
-| Wrong code format | Samples are hyphenated PTCGO leftovers (`276-BLW2-ZVD-ZD6`). Current TCG Live pack codes are 13-character `[A-Z0-9]`. |
-| No resume | 4,000 codes at 10 per redeem click is hours. A crash starts from zero. |
-| No source of truth | A `codes.txt` in the repo. Codes belong in a sheet/CSV that is **not** git. |
-| Bugs | Class name `PokeonTCGClient`. `--codes` typed as `list` (argparse eats characters). `input.text` on an `<input>` is always empty. Unbounded recursion on `StaleElementReferenceException`. |
+| **Resumable** | Progress is written after every batch. Kill it anytime; restart continues where it stopped. |
+| **Never double-redeems** | Every code's outcome is recorded, and already-redeemed codes are detected and skipped. |
+| **Self-healing** | Recovers from stray clicks, stuck reward pop-ups, and the client wandering to another screen. |
+| **Fails loud** | An unrecognised message halts the run. A code is never marked redeemed on a guess. |
+| **Codes stay private** | Masked in output by default; the real file lives outside the repo. |
 
-The current site still verifies/redeems in chunks of 10. The backend is:
+## Why it drives the game and not the website
 
+The official web redeemer is protected by **reCAPTCHA Enterprise**. It is
+invisible and score-based — there is no puzzle to solve. Every code costs one
+verification, the score decays with volume, and it eventually pins to the floor.
+Measured on a real run:
+
+| Hour (UTC) | Redeemed | Captcha rejections |
+|---|---|---|
+| 18:00 | 140 | 2 |
+| 23:00 | 120 | 1 |
+| **00:00** | **400** | **33** |
+| 01:00 | 46 | 36 |
+| 02:00 | **0** | 2 |
+
+After ~440 verifications in one hour it stopped working entirely, and retrying
+made it worse — each failed attempt is another signal that the client is a bot.
+
+**The macOS game client has no reCAPTCHA on any redemption path.** That is the
+whole reason this tool exists.
+
+## Requirements
+
+Install these before anything else:
+
+| Requirement | Why | How |
+|---|---|---|
+| **macOS** | Uses Quartz, Vision, and CGEvent. Will not run anywhere else. | — |
+| **Pokémon TCG Live** | The app being driven. Install it and sign in. | [pokemon.com/tcgl](https://www.pokemon.com/us/pokemon-trading-card-game-live) |
+| **Python 3.11+** | — | `brew install python` |
+| **uv** | Dependency and script runner. | `brew install uv` |
+
+Python dependencies (`typer`, `rich`, and the `pyobjc` frameworks for Quartz,
+Vision, Cocoa and ApplicationServices) are installed automatically by `uv sync`.
+
+### Two macOS permissions — a human must grant these
+
+Both apply to **the terminal you run `packrat` from**, not to the game. They
+cannot be granted from the command line: macOS requires a person to click.
+
+Open **System Settings → Privacy & Security**, then enable your terminal under:
+
+1. **Screen & System Audio Recording** — lets `packrat` see the game window.
+   **Quit and reopen the terminal afterwards**, or it will not take effect.
+   Without this, screen capture silently returns nothing.
+2. **Accessibility** — lets `packrat` click and type.
+
+If your terminal is not listed, add it with the **+** button.
+
+Check both at once — run this before your first redemption:
+
+```console
+$ packrat doctor
+permissions
+  screen_recording   GRANTED
+  accessibility      GRANTED
+client
+  window             GRANTED  2560x1440 at (0,0)
+  redeem screen      GRANTED  layout matches
+
+Ready. Run: packrat run --limit 10
 ```
-POST https://api.us-east-1.studio-prod.pokemon.com/commerce/v1/external/webccr/verify
-POST https://api.us-east-1.studio-prod.pokemon.com/commerce/v1/external/webccr/redeem
-Authorization: basic <a_token cookie>
-```
 
-reCAPTCHA Enterprise (`action: submit`) is attached client-side. Calling that API from a script without the browser token fails. So this tool drives a **real local browser** over CDP, types into `input#code`, clicks `[data-testid=verify-code-button]` / `[data-testid=button-redeem]`, and classifies the XHR JSON.
+`doctor` exits non-zero until everything is ready, so it is safe to gate on.
 
-Headless Playwright Chromium gets scored as a bot. Use Brave or Chrome with a persistent profile.
-
-## Setup
-
-Needs macOS, Python 3.11+, [uv](https://docs.astral.sh/uv/), and **Brave** (preferred) or Google Chrome.
+## Install
 
 ```bash
-cd ptcgl-redeem
+git clone <your-remote> packrat && cd packrat
 uv sync --extra dev
 ```
 
-Export the [TCG Codes](https://docs.google.com/spreadsheets/d/1ATNNKYtzBdQQu2xyWXcoCPdM5DrNh3hJAFrVkE9CQyA) sheet as CSV (`File → Download → CSV`), then:
+> [!NOTE]
+> **Setting this up with an AI agent?** Everything except the two permissions
+> above can be automated. Point the agent at this file and have it work through
+> the checklist below, stopping at step 3 to ask you to click.
+>
+> 1. `uv sync --extra dev`
+> 2. `uv run pytest` — 53 tests, no game required
+> 3. **Human step:** grant the two permissions, restart the terminal
+> 4. `packrat doctor` — repeat until it exits 0
+> 5. `packrat import <csv>` then `packrat status`
+> 6. **Human step:** open the game to Shop → Redeem, windowed on the active Space
+> 7. `packrat run --limit 10`, confirm the CSV updated, then `packrat run`
+>
+> Every command is non-interactive and exits non-zero on failure. `packrat run`
+> is safe to re-run: it skips anything already redeemed.
+
+## Use it
+
+**1 — Load your codes.** Export your spreadsheet as CSV. Only a `Code` column is
+required; header rows and blank spacers are ignored.
 
 ```bash
-uv run ptcgl-redeem import ~/Downloads/TCG\ Codes.csv
-uv run ptcgl-redeem status
+packrat import ~/Downloads/codes.csv
+packrat status
 ```
 
-The working copy lives at `~/.local/share/ptcgl-redeem/codes.csv`. It is outside the repo. Do not copy real codes into this tree.
+**2 — Open the game** to **Shop → Redeem**, windowed on the Space you are looking
+at (not fullscreen on another desktop).
 
-## Usage
+**3 — Redeem.**
 
 ```bash
-# Once: sign in (2FA included). Session sticks to ~/.local/state/ptcgl-redeem/browser-profile
-uv run ptcgl-redeem login
-
-# Smoke-test 5 codes without consuming them
-uv run ptcgl-redeem run --dry-run --limit 5
-
-# Redeem one set
-uv run ptcgl-redeem run --set "Destined Rivals"
-
-# Redeem everything still pending
-uv run ptcgl-redeem run
+packrat run --limit 10                 # try a few first
+packrat run                            # everything pending
+packrat run --set "Black Bolt"         # one set only
+packrat run --log ~/Desktop/done.txt   # record full codes to a file
+./run-until-done.sh                    # auto-resume across interruptions
 ```
 
-Each code is written back to the CSV immediately (`Redeemed` / `Status` / `Detail`), so Ctrl-C is safe. Stdout prints only the last four characters of a code.
+> [!WARNING]
+> **Your Mac is unusable while this runs.** `packrat` re-focuses the game before
+> every code — about every five seconds. This is deliberate: clicks are sent to
+> screen coordinates, so without it a click would land in whatever window you
+> switched to. Stop anytime with `pkill -f 'packrat run'`; nothing is lost.
 
-Stop conditions: reCAPTCHA block, fatal UI change, or an indeterminate redeem (verify succeeded, Redeem click did not confirm). Those last codes are **not** marked redeemed — check in-game before retrying.
+### CSV format
 
-At ~3 seconds per verify plus a redeem click every 10 codes, ~3,900 pending codes is on the order of 3–4 hours. Use `--set` / `--limit` and leave it running.
-
-## CSV format
-
-```
+```csv
 Code,Set,Batch,Date,Redeemed,Status,Detail
+ABCDEFGHIJKLM,Black Bolt,1/400,2026-01-01,FALSE,,
 ```
 
-- Real codes: 12–16 alphanumeric, or the old `XXX-XXXX-XXX-XXX` form.
-- Rows whose `Code` is a section header (`Email 1 — Destined Rivals (100/400)`) or blank are kept but ignored.
-- `Redeemed=TRUE` or `Status` in `{success, redeemed, rejected}` is skipped.
+`packrat` fills in `Redeemed`, `Status`, and `Detail`. Rows whose `Code` is not a
+13-character `[A-Z0-9]` string are skipped, so spreadsheet section headers pass
+through harmlessly.
 
-## What this is not
+## Commands
 
-- Not an in-game OCR clicker.
-- Not a recaptcha solver.
-- Not a public product. Private repo, personal codes, your account.
+| Command | What it does |
+|---|---|
+| `packrat doctor` | Verify permissions and that the client is ready |
+| `packrat import FILE` | Copy a spreadsheet export into the local working CSV |
+| `packrat run` | Redeem pending codes |
+| `packrat status` | Pending vs redeemed, broken down by set |
+| `packrat where` | Print local data paths |
+
+## How it works
+
+The client is a Unity app. It renders its own interface and exposes **no
+accessibility tree**, so there are no buttons to query — everything is done on
+pixels.
+
+```
+   ┌──────────────┐   capture    ┌─────────────┐   OCR     ┌──────────────┐
+   │ game window  │ ───────────► │  CGImage    │ ────────► │ text + boxes │
+   └──────────────┘  CGWindowList└─────────────┘  Vision   └──────┬───────┘
+          ▲                                                       │
+          │                  click / paste                        │
+          └────────────────── CGEvent ◄──────────────── locate targets
+```
+
+For each code: clear the field, paste, submit, re-capture, read the status
+label, classify. Then every ten codes, collect the rewards.
+
+Codes are written back as redeemed only **after** collection succeeds, because
+collection is what finalises a redemption. If it fails, the whole batch stays
+unmarked and is retried rather than optimistically recorded.
+
+### What the client tells us
+
+| On-screen status | Meaning | Recorded as |
+|---|---|---|
+| `SCANNED` | Redeemed just now | `success` ✅ |
+| `YOU HAVE ALREADY REDEEMED THAT CODE.` | Account already had it | `already_redeemed` ✅ |
+| `THAT CODE IS NOT VALID.` | Bad or mistyped code | `invalid` |
+| `ALREADY IN THE LIST` | Duplicate, still uncollected | `in_list` |
+
+Anything else stops the run. If a game update reworded a message, `packrat`
+halts rather than silently marking codes redeemed.
+
+## Your codes stay yours
+
+Redemption codes are bearer tokens — anyone who reads one can redeem it.
+
+- The working CSV lives in `~/.local/share/packrat/`, **never** in the repo.
+- `.gitignore` excludes `*.csv`, allowing only the fabricated `codes.example.csv`.
+- Console output and run journals **mask codes** (`…JKLM`) unless you pass
+  `--print-codes`.
+- `--log` is the one place real codes are written, and only to a path you name.
+
+## Development
+
+```bash
+uv run pytest        # 53 tests
+uv run ruff check .
+```
+
+Tests cover code parsing, the CSV store, and the driver's pure logic — status
+classification and the screen geometry — by injecting OCR boxes, so they need
+neither the game nor a screen capture. macOS-only tests skip automatically
+elsewhere.
+
+## Caveats
+
+- Automating the client may conflict with Pokémon's terms of service. This
+  redeems codes you already own; it does not obtain, generate, or guess codes,
+  and it bypasses no authentication or anti-bot control.
+- Each product has a soft redemption cap (around 400). Beyond it, codes return a
+  small amount of in-game currency instead of a pack.
+- Coordinates are calibrated against a 2560×1440 client and scale to other sizes,
+  but a substantial UI redesign would need recalibrating. `packrat` fails loudly
+  if the layout does not match.

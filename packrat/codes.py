@@ -9,7 +9,11 @@ CODE_RE = re.compile(r"^[A-Z0-9]{12,16}$")
 LEGACY_CODE_RE = re.compile(r"^[A-Z0-9]{3}-[A-Z0-9]{4}-[A-Z0-9]{3}-[A-Z0-9]{3}$")
 
 TRUE_VALUES = {"TRUE", "YES", "1", "REDEEMED"}
-SKIP_STATUSES = {"redeemed", "rejected", "success"}
+# Terminal outcomes: re-submitting these can only waste time.
+# "rejected" is legacy data from an older version and is kept so existing
+# sheets are not re-run. "in_list" and "indeterminate" are deliberately
+# absent -- both mean "unresolved", so they should be retried.
+SKIP_STATUSES = {"redeemed", "rejected", "success", "already_redeemed", "invalid"}
 
 
 def normalize_code(raw: str) -> str:
@@ -50,7 +54,9 @@ def parse_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
             raise ValueError(f"{path} has no header row")
         fieldnames = list(reader.fieldnames)
         rows = [{key: (row.get(key) or "") for key in fieldnames} for row in reader]
-    for extra in ("Status", "Detail"):
+    # Redeemed included: without it DictWriter(extrasaction="ignore") drops the
+    # flag on save, and every code reloads as pending forever.
+    for extra in ("Redeemed", "Status", "Detail"):
         if extra not in fieldnames:
             fieldnames.append(extra)
             for row in rows:

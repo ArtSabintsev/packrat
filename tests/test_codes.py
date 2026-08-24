@@ -1,7 +1,9 @@
 from pathlib import Path
 
-from ptcgl_redeem.codes import is_code, iter_codes, mask_code, normalize_code, pending_codes
-from ptcgl_redeem.store import CsvStore
+import pytest
+
+from packrat.codes import is_code, iter_codes, mask_code, normalize_code, pending_codes
+from packrat.store import CsvStore
 
 
 def test_accepts_modern_and_legacy_codes():
@@ -98,7 +100,7 @@ def test_failed_save_leaves_original_intact(tmp_path: Path, monkeypatch):
     def boom(fd):
         raise OSError("disk full")
 
-    monkeypatch.setattr("ptcgl_redeem.store.os.fsync", boom)
+    monkeypatch.setattr("packrat.store.os.fsync", boom)
     try:
         store.mark("TESTCODE00001", redeemed=True, status="success")
     except OSError:
@@ -145,3 +147,46 @@ def test_pending_set_filter():
     )
     pending = pending_codes(rows, set_name="black bolt")
     assert [row.code for row in pending] == ["TESTCODE00002"]
+
+
+class TestRedeemedRoundTrip:
+    def test_redeemed_survives_a_csv_without_that_column(self, tmp_path):
+        """A sheet export may omit Redeemed; marking must still stick.
+
+        DictWriter is created with extrasaction="ignore", so if Redeemed is not
+        in fieldnames the flag is silently dropped on save and the code reloads
+        as pending -- resubmitted on every future run, forever.
+        """
+        csv_path = tmp_path / "codes.csv"
+        csv_path.write_text("Code,Set\nTESTCODE00001,Example Set\n", encoding="utf-8")
+
+        store = CsvStore(csv_path)
+        store.mark("TESTCODE00001", redeemed=True, status="success", detail="redeemed")
+
+        reloaded = CsvStore(csv_path)
+        assert reloaded.codes()[0].redeemed is True
+        assert reloaded.pending() == []
+
+
+class TestSkipVocabulary:
+    """The skip set must match the statuses the tool actually writes."""
+
+    def _row(self, status: str, redeemed: str = "FALSE"):
+        return {
+            "Code": "TESTCODE00001", "Set": "S", "Batch": "", "Date": "",
+            "Redeemed": redeemed, "Status": status, "Detail": "",
+        }
+
+    @pytest.mark.parametrize("status", ["success", "already_redeemed", "invalid"])
+    def test_terminal_statuses_are_not_pending(self, status):
+        # Terminal: redeeming again is impossible or pointless.
+        assert pending_codes(iter_codes([self._row(status)])) == []
+
+    @pytest.mark.parametrize("status", ["in_list", "indeterminate", ""])
+    def test_unresolved_statuses_stay_pending(self, status):
+        # Unresolved: the outcome is not yet known, so it must be retried.
+        assert len(pending_codes(iter_codes([self._row(status)]))) == 1
+
+    def test_legacy_rejected_is_still_skipped(self):
+        # Written by an older version; existing sheets must not be re-run.
+        assert pending_codes(iter_codes([self._row("rejected")])) == []
